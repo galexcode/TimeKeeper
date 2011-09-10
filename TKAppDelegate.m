@@ -1,0 +1,307 @@
+//
+//  Timekeeper_AppDelegate.m
+//  Timekeeper
+//
+//  Created by David Beck on 1/9/11.
+//  Copyright __MyCompanyName__ 2011 . All rights reserved.
+//
+
+#import "TKAppDelegate.h"
+
+#import "Project.h"
+#import "Work.h"
+
+
+#define TKDataFilePathPreferenceKey @"DataFilePath"
+
+
+@interface TKAppDelegate ()
+
+- (NSString *)_dataFilePath;
+
+@end
+
+
+@implementation TKAppDelegate
+
+@synthesize window;
+@synthesize startStopButton;
+@synthesize timerLabel;
+@synthesize projectArrayController;
+@synthesize workArrayController;
+
+/**
+    Returns the support directory for the application, used to store the Core Data
+    store file.  This code uses a directory named "Timekeeper" for
+    the content, either in the NSApplicationSupportDirectory location or (if the
+    former cannot be found), the system's temporary directory.
+ */
+
+- (NSString *)_dataFilePath
+{
+    NSString *dataFilePath = [[NSUserDefaults standardUserDefaults] stringForKey:TKDataFilePathPreferenceKey];
+    
+    if ([dataFilePath length] <= 0) {
+        NSArray *supportPaths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+        NSString *basePath = ([supportPaths count] > 0) ? [supportPaths objectAtIndex:0] : NSTemporaryDirectory();
+        NSString *directory = [basePath stringByAppendingPathComponent:@"Timekeeper"];
+        dataFilePath = [directory stringByAppendingPathComponent:@"data.timekeeper"];
+    }
+    
+    return dataFilePath;
+}
+
+
+/**
+    Creates, retains, and returns the managed object model for the application 
+    by merging all of the models found in the application bundle.
+ */
+ 
+- (NSManagedObjectModel *)managedObjectModel {
+
+    if (managedObjectModel) return managedObjectModel;
+	
+    managedObjectModel = [[NSManagedObjectModel mergedModelFromBundles:nil] retain];    
+    return managedObjectModel;
+}
+
+
+/**
+    Returns the persistent store coordinator for the application.  This 
+    implementation will create and return a coordinator, having added the 
+    store for the application to it.  (The directory for the store is created, 
+    if necessary.)
+ */
+
+- (NSPersistentStoreCoordinator *) persistentStoreCoordinator {
+
+    if (persistentStoreCoordinator) return persistentStoreCoordinator;
+
+    NSManagedObjectModel *mom = [self managedObjectModel];
+    if (!mom) {
+        NSAssert(NO, @"Managed object model is nil");
+        return nil;
+    }
+
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSString *dataFilePath = [self _dataFilePath];
+    NSString *directory = [dataFilePath stringByDeletingLastPathComponent];
+    NSError *error = nil;
+    
+    if (![fileManager fileExistsAtPath:directory isDirectory:NULL]) {
+		if (![fileManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:&error]) {
+            NSAssert(NO, ([NSString stringWithFormat:@"Failed to create App Support directory %@ : %@", directory,error]));
+            NSLog(@"Error creating application support directory at %@ : %@",directory,error);
+            return nil;
+		}
+    }
+    
+    NSURL *url = [NSURL fileURLWithPath:dataFilePath];
+    persistentStoreCoordinator = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel: mom];
+    if (![persistentStoreCoordinator addPersistentStoreWithType:NSXMLStoreType 
+                                                configuration:nil 
+                                                URL:url 
+                                                options:nil 
+                                                error:&error]){
+        [[NSApplication sharedApplication] presentError:error];
+        [persistentStoreCoordinator release], persistentStoreCoordinator = nil;
+        return nil;
+    }    
+
+    return persistentStoreCoordinator;
+}
+
+/**
+    Returns the managed object context for the application (which is already
+    bound to the persistent store coordinator for the application.) 
+ */
+ 
+- (NSManagedObjectContext *) managedObjectContext {
+
+    if (managedObjectContext) return managedObjectContext;
+
+    NSPersistentStoreCoordinator *coordinator = [self persistentStoreCoordinator];
+    if (!coordinator) {
+        NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+        [dict setValue:@"Failed to initialize the store" forKey:NSLocalizedDescriptionKey];
+        [dict setValue:@"There was an error building up the data file." forKey:NSLocalizedFailureReasonErrorKey];
+        NSError *error = [NSError errorWithDomain:@"YOUR_ERROR_DOMAIN" code:9999 userInfo:dict];
+        [[NSApplication sharedApplication] presentError:error];
+        return nil;
+    }
+    managedObjectContext = [[NSManagedObjectContext alloc] init];
+    [managedObjectContext setPersistentStoreCoordinator: coordinator];
+
+    return managedObjectContext;
+}
+
+/**
+    Returns the NSUndoManager for the application.  In this case, the manager
+    returned is that of the managed object context for the application.
+ */
+ 
+- (NSUndoManager *)windowWillReturnUndoManager:(NSWindow *)window {
+    return [[self managedObjectContext] undoManager];
+}
+
+- (BOOL)applicationShouldOpenUntitledFile:(NSApplication *)sender
+{
+	return YES;
+}
+
+- (BOOL)applicationOpenUntitledFile:(NSApplication *)theApplication
+{
+	[self.window makeKeyAndOrderFront:self];
+	
+	return YES;
+}
+
+- (void)awakeFromNib
+{
+	projectArrayController.sortDescriptors = [NSArray arrayWithObject:[NSSortDescriptor sortDescriptorWithKey:@"name" ascending:YES]];
+	workArrayController.sortDescriptors = [NSArray arrayWithObject:[NSSortDescriptor sortDescriptorWithKey:@"startTime" ascending:NO]];
+	
+	NSTimer *timer = [NSTimer timerWithTimeInterval:5.0
+									 target:self
+								    selector:@selector(updateTimer)
+								    userInfo:nil
+									repeats:YES];
+	[[NSRunLoop mainRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];
+	[timer fire];
+	
+	[super awakeFromNib];
+}
+
+- (void)updateTimer
+{
+	if ([[self.projectArrayController selectedObjects] count] > 0) {
+		Project *currentProject = [[self.projectArrayController selectedObjects] lastObject];
+		if (currentProject.currentWork != nil) {
+			[timerLabel setHidden:NO];
+			[timerLabel setDoubleValue:[[NSDate date] timeIntervalSinceDate:currentProject.currentWork.startTime]];
+		} else {
+			[timerLabel setHidden:YES];
+		}
+	} else {
+		[timerLabel setHidden:YES];
+	}
+}
+
+/**
+    Performs the save action for the application, which is to send the save:
+    message to the application's managed object context.  Any encountered errors
+    are presented to the user.
+ */
+ 
+- (IBAction)saveAction:(id)sender {
+
+    NSError *error = nil;
+    
+    if (![[self managedObjectContext] commitEditing]) {
+        NSLog(@"%@:%s unable to commit editing before saving", [self class], _cmd);
+    }
+
+    if (![[self managedObjectContext] save:&error]) {
+        [[NSApplication sharedApplication] presentError:error];
+    }
+}
+
+- (IBAction)startStopWork:(id)sender
+{
+	//NSLog(@"startStopWork: %@", [self.projectArrayController selectedObjects]);
+	if ([[self.projectArrayController selectedObjects] count] > 0) {
+		Project *currentProject = [[self.projectArrayController selectedObjects] lastObject];
+		if (currentProject.currentWork != nil) {
+			//stop
+			currentProject.currentWork.endTime = [NSDate date];
+			currentProject.currentWork = nil;
+			
+			[startStopButton setTitle:@"Start"];
+		} else {
+			//start
+			Work *newWork = [NSEntityDescription insertNewObjectForEntityForName:@"Work"
+												 inManagedObjectContext:self.managedObjectContext];
+			[currentProject addWorkObject:newWork];
+			currentProject.currentWork = newWork;
+			
+			[startStopButton setTitle:@"Stop"];
+		}
+		
+		NSError *error;
+		if (![self.managedObjectContext save:&error]) {
+			NSLog(@"Data Error: %@", [error localizedDescription]);
+		}
+	}
+}
+
+
+/**
+    Implementation of the applicationShouldTerminate: method, used here to
+    handle the saving of changes in the application managed object context
+    before the application terminates.
+ */
+ 
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+
+    if (!managedObjectContext) return NSTerminateNow;
+
+    if (![managedObjectContext commitEditing]) {
+        NSLog(@"%@:%s unable to commit editing to terminate", [self class], _cmd);
+        return NSTerminateCancel;
+    }
+
+    if (![managedObjectContext hasChanges]) return NSTerminateNow;
+
+    NSError *error = nil;
+    if (![managedObjectContext save:&error]) {
+    
+        // This error handling simply presents error information in a panel with an 
+        // "Ok" button, which does not include any attempt at error recovery (meaning, 
+        // attempting to fix the error.)  As a result, this implementation will 
+        // present the information to the user and then follow up with a panel asking 
+        // if the user wishes to "Quit Anyway", without saving the changes.
+
+        // Typically, this process should be altered to include application-specific 
+        // recovery steps.  
+                
+        BOOL result = [sender presentError:error];
+        if (result) return NSTerminateCancel;
+
+        NSString *question = NSLocalizedString(@"Could not save changes while quitting.  Quit anyway?", @"Quit without saves error question message");
+        NSString *info = NSLocalizedString(@"Quitting now will lose any changes you have made since the last successful save", @"Quit without saves error question info");
+        NSString *quitButton = NSLocalizedString(@"Quit anyway", @"Quit anyway button title");
+        NSString *cancelButton = NSLocalizedString(@"Cancel", @"Cancel button title");
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:question];
+        [alert setInformativeText:info];
+        [alert addButtonWithTitle:quitButton];
+        [alert addButtonWithTitle:cancelButton];
+
+        NSInteger answer = [alert runModal];
+        [alert release];
+        alert = nil;
+        
+        if (answer == NSAlertAlternateReturn) return NSTerminateCancel;
+
+    }
+
+    return NSTerminateNow;
+}
+
+
+/**
+    Implementation of dealloc, to release the retained variables.
+ */
+ 
+- (void)dealloc {
+
+    [window release];
+    [managedObjectContext release];
+    [persistentStoreCoordinator release];
+    [managedObjectModel release];
+	
+    [super dealloc];
+}
+
+
+@end
